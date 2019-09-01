@@ -9,7 +9,7 @@
     "start": "node index.js"
   },
   "author": "",
-  "license": "ISC",
+  "license": "The unlicensed",
   "dependencies": {
     "dotenv": "^8.1.0",
     "moment": "^2.24.0",
