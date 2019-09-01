@@ -1,15 +1,34 @@
 require('dotenv').config();
 const Telegraf = require('telegraf');
 const moment = require('moment');
+const schedule = require('node-schedule');
 const Datastore = require('nedb');
 const { ConfigJson, Post } = require('./models');
-const { getUrl, getSummary, getSummaryWithUser, findOne, extractCommonData } = require('./utils');
+const {
+  getUrl,
+  getSummaryPeriod,
+  getPostersSummaryPeriod,
+  getSummaryText,
+  getPostersSummaryText,
+  findOne,
+  extractCommonData,
+  updatePeriod,
+  publishPostsSummary,
+  publishPostersSummary,
+  publishPeriodicSummary } = require('./utils');
 
-// https://github.com/telegraf/telegraf/issues/101
-// https://github.com/telegraf/telegraf/issues/624
 
 const helpMessage = `
-Here is what I do...
+Hi there, I'm a curator bot and keep track of shared content and reactions to it.
+Here's how it works:
+1. /share <url> (will let me know you've shared content)
+2. Every time someone 👍 your message (the '/share <url>' one) I update the likes count
+3. Once in 24h (default) I'll send summary message with all the shared content and its likes count
+4, Once in 7d (default) I'll send summary message with report of <user>: <likes count> ranking
+5. /help (will show this message)
+6. /set_summary_period <number of hours> (will update the summary period of shared content. i.e /set_summary_period 36)
+7. /set_posters_summary_period <number of hours> (will update the summary period of users likes. i.e /set_posters_summary_period 168)
+8. /summary will send interim status summary
 `;
 
 const db = new Datastore({ filename: './currator.db', autoload: true });
@@ -41,57 +60,30 @@ bot.command('share', ctx => {
     }
   });
 });
-bot.command('set_summary_period', ({ message }) => {
-  // create new Post model
+bot.command('set_summary_period', async ctx => {
+  const hours = getSummaryPeriod(ctx.message.text);
+  await updatePeriod(db, ctx, 'summaryPeriodH', hours);
 });
-bot.command('set_posters_summary_period', ({ message }) => {
-  // create new Post model
+bot.command('set_posters_summary_period', async ctx => {
+  const hours = getPostersSummaryPeriod(ctx.message.text);
+  await updatePeriod(db, ctx, 'summaryPeriodH', hours);
 });
-bot.command('set_summary_time', ({ message }) => {
-  // create new Post model
+bot.command('set_summary_time', async ctx => {
+  // TODO: set the summary time for group at specific UTC time of the day
 });
 bot.command('summary', async ctx => {
   const groupId = ctx.message.chat.id;
-  const groupConfig = await findOne(db, { type: 'BotInGroupConfig', groupId });
-  const { lastPublishedSummary } = groupConfig;
-
-
-  // db.find({
-  //   type: 'Post',
-  //   groupId
-  // }, function (err, posts) {
-  //   console.log(JSON.stringify(posts));
-  // });
-
-  db.find({
-    type: 'Post',
-    groupId,
-    createdAt: { $gte: lastPublishedSummary }
-  }, function (err, posts) {
-    ctx.telegram.sendMessage(ctx.message.chat.id, getSummary(posts));
-  });
+  await publishPostsSummary(bot, db, groupId);
 });
 
 // Regular flow of messages in the group
 bot.on('message', async ctx => {
-  console.log(JSON.stringify(ctx.message));
   const { isGroup, groupId, username } = extractCommonData(ctx);
 
   if (!isGroup) {
     ctx.telegram.sendMessage(groupId, 'This is not a group... I\'m a social guy, show me some company');
     return;
   }
-
-  // db.update({
-  //   type: 'BotInGroupConfig',
-  //   groupId
-  // }, {
-  //   $set: { lastPublishedSummary: moment.utc().toISOString() }
-  //   // $set: { lastPublishedSummary: moment.utc().add(-2, 'days').toISOString() }
-  // }, {},
-  // function (err, updated) {
-  //   console.log('updated the BotInGroupConfig lastPublishedSummary');
-  // });
 
   const groupName = ctx.message.chat.title;
 
@@ -125,11 +117,7 @@ bot.on('message', async ctx => {
     }
   }
 
-  // db.find({ type: 'Post', groupId: -386542506 }, function (err, docs) {
-  //   console.log('test docs', docs.map(x => ({ url: x.url, likes: x.likes })));
-  // });
-
-  // Main operation, catching reactions to posts and updating reaction count
+  // Main operation, catching likes to posts and updating reaction count
   if (ctx.message.text === '👍') {
     // Only capture reactions as reply
     if (ctx.message.reply_to_message && ctx.message.reply_to_message.text.startsWith('/share')) {
@@ -145,19 +133,24 @@ bot.on('message', async ctx => {
             url: getUrl(ctx.message.reply_to_message.text),
             groupId
           }, {
-            $set: { likes: ++toUpdate.likes }
-          }, {},
-          function (err, updated) {
-            console.log('updated the post likes');
-          });
+              $set: { likes: ++toUpdate.likes }
+            }, {},
+            function (err, updated) {
+              console.log('updated the post likes');
+            });
         } else {
-          console.log('Error in update. toUpdate: ', toUpdate);
+          console.log('Error in update likes. toUpdate: ', toUpdate);
         }
       } catch (err) {
         console.log('update likes error: ', err);
       }
-      ctx.telegram.sendMessage(groupId, `${username} liked ${getUrl(ctx.message.reply_to_message.text)}`);
+      // ctx.telegram.sendMessage(groupId, `${username} liked ${getUrl(ctx.message.reply_to_message.text)}`);
     }
   }
 });
+
+// cron job once every minute
+schedule.scheduleJob('*/1 * * * *', async () => publishPeriodicSummary(bot, db));
+
+// main polling of bot
 bot.launch();
