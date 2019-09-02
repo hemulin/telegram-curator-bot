@@ -13,10 +13,12 @@ const {
   findOne,
   extractCommonData,
   updatePeriod,
+  toggleConfigAttribute,
   publishPostsSummary,
   publishPostersSummary,
   publishPeriodicSummary } = require('./utils');
 
+const botReactions = ['👍', '👌', '👆💪', '👏', '👀', '🤦‍♀️🤣', '😎'];
 
 const helpMessage = `
 Hi there, I'm a curator bot and keep track of shared content and reactions to it.
@@ -26,9 +28,10 @@ Here's how it works:
 3. Once in 24h (default) I'll send summary message with all the shared content and its likes count
 4, Once in 7d (default) I'll send summary message with report of <user>: <likes count> ranking
 5. /help (will show this message)
-6. /set_summary_period <number of hours> (will update the summary period of shared content. i.e /set_summary_period 36)
-7. /set_posters_summary_period <number of hours> (will update the summary period of users likes. i.e /set_posters_summary_period 168)
+6. /set_summary_period <number of hours> will update the summary period of shared content. i.e /set_summary_period 36
+7. /set_posters_summary_period <number of hours> will update the summary period of users likes. i.e /set_posters_summary_period 168
 8. /summary will send interim status summary
+9. /toggle_self_reactions will turn the bot reactions to share on/off
 `;
 
 const db = new Datastore({ filename: './currator.db', autoload: true });
@@ -51,22 +54,32 @@ bot.command('share', ctx => {
     return;
   }
   const post = Post(url, username, groupId);
-  db.insert(post, (err, newDoc) => {   // Callback is optional
+  db.insert(post, async (err, newDoc) => {   // Callback is optional
     if (err) {
       ctx.telegram.sendMessage(groupId, `Error: ${err}`);
     } else {
-      ctx.telegram.sendMessage(groupId, `new post ${url} by ${username}`);
       console.log(`New insered post: ${JSON.stringify(newDoc)}`);
+      const groupConfig = await findOne(db, { type: 'BotInGroupConfig', groupId });
+      if (groupConfig.selfReactions) {
+        const randomReaction = botReactions[Math.floor(Math.random() * botReactions.length)];
+        ctx.reply(randomReaction, Telegraf.Extra.inReplyTo(ctx.message.message_id));
+      }
     }
   });
 });
 bot.command('set_summary_period', async ctx => {
   const hours = getSummaryPeriod(ctx.message.text);
   await updatePeriod(db, ctx, 'summaryPeriodH', hours);
+  ctx.telegram.sendMessage(ctx.message.chat.id, `Changed summary frequency to ${hours} hours`);
 });
 bot.command('set_posters_summary_period', async ctx => {
   const hours = getPostersSummaryPeriod(ctx.message.text);
-  await updatePeriod(db, ctx, 'summaryPeriodH', hours);
+  await updatePeriod(db, ctx, 'postersSummaryPeriodH', hours);
+  ctx.telegram.sendMessage(ctx.message.chat.id, `Changed posters summary frequency to ${hours} hours`);
+});
+bot.command('toggle_self_reactions', async ctx => {
+  const updatedGroupConfig = await toggleConfigAttribute(db, ctx, 'selfReactions');
+  ctx.telegram.sendMessage(ctx.message.chat.id, `Changed self reactions to ${updatedGroupConfig.selfReactions ? 'OFF' : 'ON'}`);
 });
 bot.command('set_summary_time', async ctx => {
   // TODO: set the summary time for group at specific UTC time of the day
@@ -102,13 +115,13 @@ bot.on('message', async ctx => {
           ctx.telegram.sendMessage(groupId, 'Reminder: ' + helpMessage);
         });
       } else { // new group
-        const botInGroupConfig = ConfigJson(groupId);
+        const botInGroupConfig = ConfigJson(groupId, groupName);
         await db.insert(botInGroupConfig, (err, newDoc) => {   // Callback is optional
           if (err) {
             ctx.telegram.sendMessage(groupId, `Error: ${err}`);
           } else {
-            ctx.telegram.sendMessage(groupId, `Hi ${groupName}, it is a pleasure to be here!`);
-            ctx.telegram.sendMessage(groupId, helpMessage);
+            ctx.telegram.sendMessage(groupId, `${groupName}, it is a pleasure to be here!`).then(() =>
+              ctx.telegram.sendMessage(groupId, helpMessage));
           }
         });
       }
@@ -133,11 +146,11 @@ bot.on('message', async ctx => {
             url: getUrl(ctx.message.reply_to_message.text),
             groupId
           }, {
-              $set: { likes: ++toUpdate.likes }
-            }, {},
-            function (err, updated) {
-              console.log('updated the post likes');
-            });
+            $set: { likes: ++toUpdate.likes }
+          }, {},
+          function (err, updated) {
+            // console.log('updated the post likes');
+          });
         } else {
           console.log('Error in update likes. toUpdate: ', toUpdate);
         }

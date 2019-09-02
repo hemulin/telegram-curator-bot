@@ -2,10 +2,12 @@ const moment = require('moment');
 
 const EPOCH = '1970-01-01T00:00:00Z';
 
-const ConfigJson = groupId => {
+const ConfigJson = (groupId, groupName) => {
   return {
     type: 'BotInGroupConfig',
     groupId,
+    groupName,
+    selfReactions: true,
     summaryPeriodH: 24,
     postersSummaryPeriodH: 24 * 7,
     createdAt: moment.utc().toISOString(),
@@ -27,6 +29,7 @@ const Post = (url, username, groupId, userId) => {
 };
 
 module.exports = {
+  EPOCH,
   ConfigJson,
   Post
 };

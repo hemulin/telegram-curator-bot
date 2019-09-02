@@ -1,4 +1,5 @@
 const moment = require('moment');
+const { EPOCH } = require('./models');
 
 const getUrl = sharedText => sharedText.replace('/share ', '').trim();
 const getSummaryPeriod = hourCount => hourCount.replace('/set_summary_period ', '').trim();
@@ -49,7 +50,7 @@ const getPostersSummaryText = posts => {
 
   const toJoin = sortedUsersMap.map(x => `${x}: ${usersToLikesMap[x]}\n`);
 
-  return 'Username: Like count\n' + toJoin.join();
+  return 'Username: Total likes count\n' + toJoin.join();
 };
 
 const extractCommonData = ctx => {
@@ -72,7 +73,7 @@ const updatePeriod = async (db, ctx, attr, hours) => {
         type: 'BotInGroupConfig',
         groupId
       }, {
-        $set: { attr: hours }
+        $set: { [attr]: hours }
       }, {},
       function (err, updated) {
         console.log(`updated ${attr} period`);
@@ -83,6 +84,33 @@ const updatePeriod = async (db, ctx, attr, hours) => {
   } catch (err) {
     console.log('update period error: ', err);
   }
+};
+
+const toggleConfigAttribute = async (db, ctx, attr) => {
+  const groupId = ctx.message.chat.id;
+  let toUpdate;
+  try {
+    toUpdate = await findOne(db, {
+      type: 'BotInGroupConfig',
+      groupId
+    });
+    if (toUpdate) {
+      db.update({
+        type: 'BotInGroupConfig',
+        groupId
+      }, {
+        $set: { [attr]: !toUpdate[attr] }
+      }, {},
+      function (err, updated) {
+        console.log(`updated ${attr}`);
+      });
+    } else {
+      console.log(`Error in updating ${attr}. toUpdate: `, toUpdate);
+    }
+  } catch (err) {
+    console.log('update period error: ', err);
+  }
+  return toUpdate;
 };
 
 const publishPostsSummary = async (bot, db, groupId) => {
@@ -115,7 +143,10 @@ const publishPeriodicSummary = async (bot, db) => {
       // Posts summary
       if (moment.utc() >= moment(config.lastPublishedSummary).add(config.summaryPeriodH, 'hours')) {
         const groupId = config.groupId;
-        await publishPostsSummary(bot, db, groupId);
+        if (config.lastPublishedSummary !== EPOCH) {
+          // Avoid first time summary sending
+          await publishPostsSummary(bot, db, groupId);
+        }
         db.update({
           type: 'BotInGroupConfig',
           groupId
@@ -129,7 +160,10 @@ const publishPeriodicSummary = async (bot, db) => {
       // Posters summary
       if (moment.utc() >= moment(config.lastPublishedPosters).add(config.postersSummaryPeriodH, 'hours')) {
         const groupId = config.groupId;
-        await publishPostersSummary(bot, db, groupId);
+        if (config.lastPublishedPosters !== EPOCH) {
+          // Avoid first time summary sending
+          await publishPostersSummary(bot, db, groupId);
+        }
         db.update({
           type: 'BotInGroupConfig',
           groupId
@@ -154,6 +188,7 @@ module.exports = {
   findOne,
   extractCommonData,
   updatePeriod,
+  toggleConfigAttribute,
   publishPostsSummary,
   publishPostersSummary,
   publishPeriodicSummary
